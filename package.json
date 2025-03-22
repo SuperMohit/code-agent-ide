@@ -1,0 +1,84 @@
+{
+  "name": "quest1-code-assistant",
+  "displayName": "Quest1 Code Assistant",
+  "description": "VS Code extension with a chat interface for code assistance",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": false,
+    "untrustedWorkspaces": {
+      "supported": false
+    }
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "quest1CodeAssistant.open",
+        "title": "Open Quest1 Code Assistant",
+        "category": "Quest1"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "quest1-sidebar",
+          "title": "Quest1 Assistant",
+          "icon": "media/quest1-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "quest1-sidebar": [
+        {
+          "type": "webview",
+          "id": "quest1ChatView",
+          "name": "Chat"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Quest1 Code Assistant",
+      "properties": {
+        "quest1CodeAssistant.openaiApiKey": {
+          "type": "string",
+          "default": "<your-api-key>",
+          "description": "OpenAI API Key for AI features (required for the extension to work)"
+        },
+        "quest1CodeAssistant.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "enum": ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "o3-mini"],
+          "description": "OpenAI model to use for generating responses"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "markdown-it": "^14.0.0",
+    "openai": "^4.28.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.1.2",
+    "@types/node": "^16.18.34",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.0",
+    "@typescript-eslint/parser": "^6.7.0",
+    "eslint": "^8.26.0",
+    "typescript": "^5.2.2"
+  }
+}
