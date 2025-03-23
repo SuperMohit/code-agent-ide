@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { ContextFilesManager } from './ContextFilesManager';
 import { ProjectPathService } from './ProjectPathService';
+import { IToolExecutorService } from './interfaces';
 
 // Import tool implementations
 import { createFile } from '../tools/createFile';
@@ -18,12 +19,33 @@ import { searchWeb } from '../tools/searchWeb';
 import { runCommand } from '../tools/runCommand';
 import { executeDone } from '../tools/done';
 import { treeView } from '../tools/treeView';
+import { checkDiagnostics } from '../tools/checkDiagnostics';
+import { getSymbolInfo } from '../tools/getSymbolInfo';
+import { getCodeActions } from '../tools/getCodeActions';
+import { applyCodeAction } from '../tools/applyCodeAction';
 
 /**
  * Handles the execution of tools used by the AI assistant
  */
-export class ToolExecutor {
+export class ToolExecutor implements IToolExecutorService {
   constructor(private contextFilesManager: ContextFilesManager) {}
+
+  /**
+   * Check if a tool requires user confirmation before execution
+   * @param toolName The name of the tool to check
+   * @returns True if the tool requires user confirmation
+   */
+  public requiresUserConfirmation(toolName: string): boolean {
+    // List of tools that require user confirmation
+    const breakingChangeTools = [
+      'create_file',
+      'update_file',
+      'create_directory',
+      'run_command'
+    ];
+    
+    return breakingChangeTools.includes(toolName);
+  }
 
   /**
    * Execute a tool with timeout protection
@@ -96,6 +118,9 @@ export class ToolExecutor {
         
       case 'run_command':
         return this.executeRunCommand(functionArgs);
+        
+      case 'check_diagnostics':
+        return this.executeCheckDiagnostics(functionArgs);
       
       default:
         return `Tool ${functionName} is not implemented yet.`;
@@ -461,6 +486,58 @@ export class ToolExecutor {
     } catch (error) {
       console.error('Error executing tree_view:', error);
       return `Error executing tree_view: ${error}`;
+    }
+  }
+  
+  /**
+   * Execute the check_diagnostics tool to analyze code problems
+   */
+  private async executeCheckDiagnostics(args: any): Promise<string> {
+    try {
+      console.log('Executing check_diagnostics with args:', JSON.stringify(args, null, 2));
+      return await checkDiagnostics(args);
+    } catch (error) {
+      console.error('Error executing check_diagnostics tool:', error);
+      return `Error executing check_diagnostics: ${error}`;
+    }
+  }
+  
+  /**
+   * Execute the get_symbol_info tool to get information about code symbols
+   */
+  private async executeGetSymbolInfo(args: any): Promise<string> {
+    try {
+      console.log('Executing get_symbol_info with args:', JSON.stringify(args, null, 2));
+      return await getSymbolInfo(args);
+    } catch (error) {
+      console.error('Error executing get_symbol_info tool:', error);
+      return `Error executing get_symbol_info: ${error}`;
+    }
+  }
+  
+  /**
+   * Execute the get_code_actions tool to get available code fixes
+   */
+  private async executeGetCodeActions(args: any): Promise<string> {
+    try {
+      console.log('Executing get_code_actions with args:', JSON.stringify(args, null, 2));
+      return await getCodeActions(args);
+    } catch (error) {
+      console.error('Error executing get_code_actions tool:', error);
+      return `Error executing get_code_actions: ${error}`;
+    }
+  }
+  
+  /**
+   * Execute the apply_code_action tool to fix code issues
+   */
+  private async executeApplyCodeAction(args: any): Promise<string> {
+    try {
+      console.log('Executing apply_code_action with args:', JSON.stringify(args, null, 2));
+      return await applyCodeAction(args);
+    } catch (error) {
+      console.error('Error executing apply_code_action tool:', error);
+      return `Error executing apply_code_action: ${error}`;
     }
   }
 }

@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { OpenAIService } from '../openai-service';
+import * as MarkdownIt from 'markdown-it';
+import hljs from 'highlight.js';
 
 export class ChatView {
   public static currentPanel: ChatView | undefined;
@@ -8,7 +10,7 @@ export class ChatView {
   private readonly extensionUri: vscode.Uri;
   private readonly openAIService: OpenAIService;
   private disposables: vscode.Disposable[] = [];
-  private messageHistory: { role: string, content: string }[] = [];
+  private messageHistory: { role: string, content: string, id?: string }[] = [];
   private contextFiles: string[] = []; // Track files used for context
 
   public static createOrShow(extensionUri: vscode.Uri, openAIService: OpenAIService) {
@@ -88,20 +90,27 @@ export class ChatView {
       this.messageHistory.push({ role: 'user', content: text });
       this.updateWebview();
       
-      // Show the loading indicator
-      this.panel.webview.postMessage({ command: 'showProcessing' });
-
       try {
-        // Process with OpenAI
+        // Process with OpenAI (non-streaming only)
         console.log('Sending query to OpenAI service:', text.substring(0, 30) + '...');
+        
+        // Show the loading indicator
+        this.panel.webview.postMessage({ command: 'showProcessing' });
+        
+        // Always use non-streaming approach
         const response = await this.openAIService.processQuery(text);
         console.log('Received response from OpenAI service');
         
         // Add assistant response to history
         this.messageHistory.push({ role: 'assistant', content: response });
-      } finally {
-        // Hide the loading indicator regardless of success or failure
+        
+        // Hide the loading indicator
         this.panel.webview.postMessage({ command: 'hideProcessing' });
+      } catch (error) {
+        // Hide any indicators
+        this.panel.webview.postMessage({ command: 'hideProcessing' });
+        this.panel.webview.postMessage({ command: 'endStreaming' });
+        throw error; // Rethrow to be caught by outer catch block
       }
       
       // Update the webview with the new message history
@@ -161,8 +170,11 @@ export class ChatView {
       const avatarLabel = isUser ? 'You' : 'AI';
       const formattedContent = this.formatMessageContent(msg.content);
       
+      // Include data-id attribute if the message has an ID (for streaming)
+      const dataIdAttr = msg.id ? ` data-id="${msg.id}"` : '';
+      
       return `
-        <div class="message ${messageClass}">
+        <div class="message ${messageClass}"${dataIdAttr}>
           <div class="avatar">${avatarLabel}</div>
           <div class="content">${formattedContent}</div>
         </div>
@@ -360,6 +372,116 @@ export class ChatView {
             border-radius: 5px;
             overflow-x: auto;
             font-family: var(--vscode-editor-font-family);
+            margin: 8px 0;
+          }
+          
+          /* Tree view styling */
+          pre.tree-view {
+            font-family: monospace;
+            white-space: pre;
+            line-height: 1.3;
+            overflow-x: auto;
+          }
+          
+          pre.tree-view strong {
+            color: var(--vscode-textLink-foreground);
+            font-weight: bold;
+          }
+          
+          /* Markdown styling */
+          h1, h2, h3, h4, h5, h6 {
+            margin-top: 16px;
+            margin-bottom: 8px;
+            color: var(--vscode-editor-foreground);
+          }
+          
+          p {
+            margin-top: 8px;
+            margin-bottom: 8px;
+          }
+          
+          ul, ol {
+            margin-top: 8px;
+            margin-bottom: 8px;
+            padding-left: 20px;
+          }
+          
+          blockquote {
+            border-left: 3px solid var(--vscode-activityBarBadge-background);
+            margin: 8px 0;
+            padding-left: 16px;
+            color: var(--vscode-descriptionForeground);
+          }
+          
+          a {
+            color: var(--vscode-textLink-foreground);
+            text-decoration: none;
+          }
+          
+          a:hover {
+            text-decoration: underline;
+          }
+          
+          /* Streaming cursor styles */
+          .streaming-cursor {
+            display: inline-block;
+            animation: blink 1s infinite;
+            margin-left: 2px;
+            color: var(--vscode-editor-foreground);
+          }
+          
+          @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0; }
+            100% { opacity: 1; }
+          }
+          
+          /* Syntax highlighting styles */
+          .hljs {
+            display: block;
+            overflow-x: auto;
+            color: var(--vscode-editor-foreground);
+          }
+          
+          .hljs-keyword,
+          .hljs-selector-tag,
+          .hljs-literal,
+          .hljs-section,
+          .hljs-link {
+            color: #569CD6;
+          }
+          
+          .hljs-function {
+            color: #DCDCAA;
+          }
+          
+          .hljs-string,
+          .hljs-attr,
+          .hljs-regexp,
+          .hljs-number {
+            color: #CE9178;
+          }
+          
+          .hljs-built_in,
+          .hljs-builtin-name {
+            color: #4EC9B0;
+          }
+          
+          .hljs-comment,
+          .hljs-quote {
+            color: #6A9955;
+            font-style: italic;
+          }
+          
+          .hljs-variable,
+          .hljs-template-variable {
+            color: #9CDCFE;
+          }
+          
+          .hljs-title,
+          .hljs-name,
+          .hljs-type {
+            color: #4EC9B0;
           }
           
           /* Processing indicator styles */
@@ -495,6 +617,162 @@ export class ChatView {
                 userInput.disabled = false;
                 sendButton.disabled = false;
                 break;
+              
+              case 'startStreaming':
+                // Start a streaming assistant message, creating an element with the specified ID
+                userInput.disabled = true;
+                sendButton.disabled = true;
+                
+                // We don't need to create a new element here as the message is already created
+                // in the HTML by the server-side code, but we need to identify it
+                if (message.id) {
+                  // Find the last assistant message which should have the ID
+                  const streamingMessage = document.querySelector('.message[data-id="' + message.id + '"] .content');
+                  if (streamingMessage) {
+                    // Create and append a cursor to indicate streaming
+                    const cursor = document.createElement('span');
+                    cursor.className = 'streaming-cursor';
+                    cursor.textContent = '▌';
+                    streamingMessage.appendChild(cursor);
+                  }
+                }
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                break;
+                
+              case 'updateStreamingContent':
+                // Update the content of a streaming message
+                console.log('%c[WebView] updateStreamingContent received', 'color: green; font-weight: bold');
+                console.log('Message ID:', message.id, 'Content length:', message.content ? message.content.length : 0);
+                console.log('Content preview:', message.content ? message.content.substring(0, 50) + '...' : 'none');
+                
+                if (message.id && message.content) {
+                  // Dump all messages for debugging
+                  console.log('All message elements:');
+                  document.querySelectorAll('.message').forEach(function(el, idx) {
+                    console.log('- Message ' + idx + ':', el.getAttribute('data-id') || 'no data-id');
+                  });
+                  
+                  // Find the streaming message element
+                  const streamingMessage = document.querySelector('.message[data-id="' + message.id + '"] .content');
+                  console.log('Found streaming message element:', streamingMessage ? 'YES' : 'NO');
+                  
+                  if (streamingMessage) {
+                    // Enhanced approach for handling streaming content
+                    console.log('[STREAMING] Received chunk, content length:', message.content.length);
+                    
+                    // Special handling for tree_view content
+                    const plainContent = message.content;
+                    let isTreeViewContent = false;
+                    
+                    // Check if content appears to be a tree structure (contains directory tree formatting)
+                    if (plainContent.includes('───') || 
+                        plainContent.includes('└──') || 
+                        plainContent.includes('├──') || 
+                        (plainContent.includes('/') && plainContent.includes('directories') && plainContent.includes('files'))) {
+                      isTreeViewContent = true;
+                      console.log('[STREAMING] Detected tree view content');
+                    }
+                    
+                    // Configure markdown-it with appropriate options
+                    const md = new markdownit({
+                      highlight: highlightCode,
+                      breaks: true,
+                      linkify: true,
+                      html: true
+                    });
+                    
+                    // Add special handlers for markdown-it
+                    md.use((md) => {
+                      // Store the original code block renderer
+                      const defaultRender = md.renderer.rules.code_block || function(tokens, idx, options, env, self) {
+                        return self.renderToken(tokens, idx, options);
+                      };
+                      
+                      // Enhanced code block rendering
+                      md.renderer.rules.code_block = function(tokens, idx, options, env, self) {
+                        console.log('[MARKDOWN] Processing code block');
+                        return defaultRender(tokens, idx, options, env, self);
+                      };
+                    });
+                    
+                    // Process content based on its type
+                    let htmlContent = '';
+                    
+                    if (isTreeViewContent) {
+                      // Special handling for tree view content
+                      console.log('[STREAMING] Processing tree view content specially');
+                      
+                      // Wrap the tree view in a pre tag for proper formatting
+                      htmlContent = '<pre class="tree-view">' + 
+                        plainContent
+                          .replace(/&/g, '&amp;')
+                          .replace(/</g, '&lt;')
+                          .replace(/>/g, '&gt;')
+                          .replace(/"/g, '&quot;')
+                          .replace(/'/g, '&#039;')
+                          // Optional: highlight directory names
+                          .replace(/([^\s]+)\//g, '<strong>$1/</strong>')
+                        + '</pre>';
+                    } else {
+                      // Standard markdown rendering for non-tree content
+                      htmlContent = md.render(plainContent);
+                    }
+                    
+                    console.log('[STREAMING] Rendered HTML content length:', htmlContent.length);
+                    
+                    // Update the content but keep the cursor
+                    streamingMessage.innerHTML = htmlContent;
+                    console.log('innerHTML updated with new content');
+                    
+                    // Re-add the cursor
+                    const cursor = document.createElement('span');
+                    cursor.className = 'streaming-cursor';
+                    cursor.textContent = '▌';
+                    streamingMessage.appendChild(cursor);
+                    console.log('Cursor added to content');
+                    
+                    // Scroll to the bottom to follow the new content
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                  } else {
+                    console.error('%c[ERROR] Could not find streaming message element with ID: ' + message.id, 'color: red; font-weight: bold');
+                    console.log('DOM structure:');
+                    console.log(document.body.innerHTML);
+                    
+                    // Try a more general selector to see if the element exists but with different attributes
+                    const allMessages = document.querySelectorAll('.message');
+                    console.log('Found ' + allMessages.length + ' message elements:');
+                    allMessages.forEach(function(el, idx) {
+                      console.log('Message ' + idx + ':', {
+                        'data-id': el.getAttribute('data-id'),
+                        'class': el.className,
+                        'innerHTML': el.innerHTML.substring(0, 50) + '...'
+                      });
+                    });
+                  }
+                } else {
+                  console.error('Missing required data in updateStreamingContent:', { id: message.id, hasContent: !!message.content });
+                }
+                break;
+                
+              case 'endStreaming':
+                // End streaming and finalize the message
+                userInput.disabled = false;
+                sendButton.disabled = false;
+                
+                // Remove any streaming cursors
+                const cursors = document.querySelectorAll('.streaming-cursor');
+                cursors.forEach(cursor => cursor.remove());
+                
+                // If we have a specific message ID, make sure that one is cleaned up
+                if (message.id) {
+                  const streamingMessage = document.querySelector('.message[data-id="' + message.id + '"] .content');
+                  if (streamingMessage) {
+                    // Remove any cursors from this specific message
+                    const messageCursors = streamingMessage.querySelectorAll('.streaming-cursor');
+                    messageCursors.forEach(cursor => cursor.remove());
+                  }
+                }
+                break;
                 
               case 'updateContextFiles':
                 updateContextFiles(message.files);
@@ -549,20 +827,31 @@ export class ChatView {
   }
 
   private formatMessageContent(content: string): string {
-    // Replace newlines with <br>
-    content = content.replace(/\n/g, '<br>');
-    
-    // Format code blocks with ```
-    content = content.replace(/```([^`]*)```/g, (_unused, code) => {
-      return `<pre>${this.escapeHtml(code.trim())}</pre>`;
+    // Initialize markdown-it with highlight.js for syntax highlighting
+    const md = new MarkdownIt({
+      html: false,         // Disable HTML tags in source
+      xhtmlOut: false,    // Use '/' to close single tags (<br />)
+      breaks: true,       // Convert '\n' in paragraphs into <br>
+      linkify: true,      // Auto-convert URLs to links
+      typographer: true,  // Enable smartypants and other substitutions
+      highlight: (str, lang) => {
+        if (lang && hljs.getLanguage(lang)) {
+          try {
+            return '<pre class="hljs"><code>' + 
+                   hljs.highlight(str, { language: lang, ignoreIllegals: true }).value + 
+                   '</code></pre>';
+          } catch (error) {
+            console.error('Error highlighting code:', error);
+          }
+        }
+        // Use generic highlighter if language isn't specified or found
+        return '<pre class="hljs"><code>' + 
+               hljs.highlightAuto(str).value + 
+               '</code></pre>';
+      }
     });
     
-    // Format inline code with `
-    content = content.replace(/`([^`]*)`/g, (_unused, code) => {
-      return `<code>${this.escapeHtml(code)}</code>`;
-    });
-    
-    return content;
+    return md.render(content);
   }
 
   private escapeHtml(text: string): string {

@@ -88,9 +88,9 @@ export class OpenAIService {
       let finalResponse = '';
       let lastError: Error | null = null;
       let iterations = 0;
-      const MAX_ITERATIONS = 10; // Safety limit to prevent infinite loops
-      const MAX_PAYLOAD_SIZE = 100000; // Approximate character limit to trigger summarization
-      const MAX_MESSAGES = 20; // Maximum number of messages before we consider summarizing
+      const MAX_ITERATIONS = 5; // Safety limit to prevent infinite loops
+      const MAX_PAYLOAD_SIZE = 10000; // Approximate character limit to trigger summarization
+      const MAX_MESSAGES = 10; // Maximum number of messages before we consider summarizing
       
       // Start the agentic loop
       while (!loopComplete && iterations < MAX_ITERATIONS) {
@@ -174,10 +174,10 @@ export class OpenAIService {
           
           // Call OpenAI API to get assistant's action/thought
           const response = await client.chat.completions.create({
-            model: 'gpt-4',
+            model: 'gpt-4o',
             messages: messages as any,
             tools: tools,
-            temperature: 0.2,
+            temperature: 0.8,
           });
           
           const assistantMessage = response.choices[0].message;
@@ -227,11 +227,25 @@ export class OpenAIService {
             } catch (error) {
               console.error('Error executing done tool:', error);
               
-              // Add the error to the conversation history
+              // Check if this is an OpenAI API error
+              const isOpenAIError = error instanceof Error && 
+                (error.message.includes('400 Invalid parameter') || 
+                 error.message.includes('invalid_request_error') ||
+                 error.message.includes('OpenAI API'));
+              
+              if (isOpenAIError) {
+                console.error('Detected OpenAI API error in done tool, breaking the loop');
+                loopComplete = true;
+                finalResponse = `I'm having trouble processing your request due to an API error. Please try again with a simpler query.`;
+                continue;
+              }
+              
+              // For non-OpenAI API errors, add a placeholder response to maintain API validity
+              const errorMessage = error instanceof Error ? error.message : String(error);
               this.conversationManager.addToConversationHistory({
                 role: 'tool',
                 tool_call_id: doneToolCall.id,
-                content: `Error: ${error}`
+                content: `Error executing tool: ${errorMessage}`
               });
               
               lastError = error instanceof Error ? error : new Error(String(error));
@@ -326,11 +340,25 @@ export class OpenAIService {
             } catch (error) {
               console.error('Error executing tool call:', error);
               
-              // Add the error to the conversation history
+              // Check if this is an OpenAI API error
+              const isOpenAIError = error instanceof Error && 
+                (error.message.includes('400 Invalid parameter') || 
+                 error.message.includes('invalid_request_error') ||
+                 error.message.includes('OpenAI API'));
+              
+              if (isOpenAIError) {
+                console.error('Detected OpenAI API error in tool call, breaking the loop');
+                loopComplete = true;
+                finalResponse = `I'm having trouble processing your request due to an API error. Please try again with a simpler query.`;
+                break; // Exit the tool call loop
+              }
+              
+              // For non-OpenAI API errors, add a placeholder response to maintain API validity
+              const errorMessage = error instanceof Error ? error.message : String(error);
               this.conversationManager.addToConversationHistory({
                 role: 'tool',
                 tool_call_id: toolCall.id,
-                content: `Error: ${error}`
+                content: `Error executing tool: ${errorMessage}`
               });
               
               // Save the error for the next iteration
@@ -343,6 +371,23 @@ export class OpenAIService {
           
         } catch (error) {
           console.error(`Error in agentic loop iteration #${iterations}:`, error);
+          
+          // Check if this is an OpenAI API error
+          const isOpenAIError = error instanceof Error && 
+            (error.message.includes('400 Invalid parameter') || 
+             error.message.includes('invalid_request_error') ||
+             error.message.includes('OpenAI API'));
+          
+          if (isOpenAIError) {
+            console.error('Detected OpenAI API error, breaking the loop');
+            loopComplete = true;
+            finalResponse = `I'm having trouble processing your request due to an API error. Please try again with a simpler query.`;
+            
+            // Don't set lastError, as we don't want to add this to the conversation history
+            continue;
+          }
+          
+          // For other errors, continue the loop with retries
           lastError = error instanceof Error ? error : new Error(String(error));
           
           // Sleep for 1 second before continuing to prevent rapid retries

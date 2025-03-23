@@ -13,6 +13,7 @@ export interface ConversationMessage {
 export interface ToolCallResult {
   tool_call_id: string;
   output: string;
+  success: boolean;
 }
 
 export interface APIKeyValidation {

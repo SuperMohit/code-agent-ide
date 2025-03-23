@@ -48,15 +48,66 @@ export class ConversationManager {
       return;
     }
     
-    // Find a safe truncation point: we need to keep tool calls with their responses
-    // Start from earliest messages and remove whole exchanges
+    // Step 1: Identify tool call messages and their corresponding tool responses
+    const toolCallMap = new Map<string, number>(); // Map from tool_call_id to assistant message index
+    const toolResponseMap = new Map<number, number[]>(); // Map from assistant message index to array of tool response indices
+    
+    // Build our maps
+    for (let i = 0; i < this.conversationHistory.length; i++) {
+      const message = this.conversationHistory[i];
+      
+      // If this is an assistant message with tool calls, map each tool call ID to this message index
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        const responseIndices: number[] = [];
+        toolResponseMap.set(i, responseIndices);
+        
+        for (const toolCall of message.tool_calls) {
+          toolCallMap.set(toolCall.id, i);
+        }
+      }
+      
+      // If this is a tool response, find its corresponding tool call and add to responseIndices
+      if (message.role === 'tool' && message.tool_call_id) {
+        const assistantIndex = toolCallMap.get(message.tool_call_id);
+        if (assistantIndex !== undefined) {
+          const responseIndices = toolResponseMap.get(assistantIndex) || [];
+          responseIndices.push(i);
+          toolResponseMap.set(assistantIndex, responseIndices);
+        }
+      }
+    }
+    
+    // Step 2: Find a safe truncation point where we don't break tool call-response pairs
+    // Start from earliest messages and find a point where we won't split tool call/response pairs
     let safeRemovalPoint = 0;
     
-    // We assume that a well-formed exchange starts with user and is followed by assistant
-    // We want to keep complete exchanges, so we look for points where the next message is from the user
+    // Organize messages into complete exchanges (user->assistant[->tool responses] cycles)
     for (let i = 0; i < this.conversationHistory.length - minimumToKeep; i++) {
-      if (i + 1 < this.conversationHistory.length && 
-          this.conversationHistory[i + 1].role === 'user') {
+      const message = this.conversationHistory[i];
+      
+      // If this is a user message, check if removing up to this point would be safe
+      if (message.role === 'user') {
+        // Check if the next message is a tool-calling assistant message
+        const nextIndex = i + 1;
+        if (nextIndex < this.conversationHistory.length) {
+          const nextMessage = this.conversationHistory[nextIndex];
+          
+          // If the next message is an assistant with tool calls, we need to be careful
+          if (nextMessage.role === 'assistant' && nextMessage.tool_calls && nextMessage.tool_calls.length > 0) {
+            // Get the indices of all tool responses for this tool call
+            const responseIndices = toolResponseMap.get(nextIndex) || [];
+            
+            // If any tool response index is beyond our desired truncation point,
+            // we can't safely remove this exchange
+            const maxResponseIndex = Math.max(...responseIndices, nextIndex);
+            if (maxResponseIndex >= this.conversationHistory.length - minimumToKeep) {
+              // We can't safely remove this tool call and its responses
+              break;
+            }
+          }
+        }
+        
+        // If we get here, it's safe to remove up to and including this user message
         safeRemovalPoint = i + 1;
       }
       
@@ -73,20 +124,30 @@ export class ConversationManager {
   }
 
   /**
-   * Validates the conversation history to ensure all tool messages have valid preceding tool calls
+   * Validates and sanitizes the conversation history to ensure all tool messages have valid preceding tool calls
+   * and all tool calls have corresponding tool messages
+   * @returns The sanitized conversation history
    */
-  public validateConversationHistory(): void {
-    // Scan the conversation history to ensure tool responses have matching tool calls
-    for (let i = 0; i < this.conversationHistory.length; i++) {
-      const message = this.conversationHistory[i];
+  public validateAndSanitizeConversationHistory(): ConversationMessage[] {
+    console.log('[ConversationManager] Starting conversation history validation');
+    console.log(`[ConversationManager] Initial history length: ${this.conversationHistory.length}`);
+    
+    // Create a copy of the conversation history to avoid modifying the original during validation
+    let validatedHistory: ConversationMessage[] = [...this.conversationHistory];
+    let messagesToRemove: number[] = [];
+    
+    // First pass: Identify all tool messages without matching tool calls
+    for (let i = 0; i < validatedHistory.length; i++) {
+      const message = validatedHistory[i];
       
       // If this is a tool message, ensure it has a valid preceding assistant message with tool calls
       if (message.role === 'tool' && message.tool_call_id) {
         let foundMatchingToolCall = false;
+        let matchingAssistantIndex = -1;
         
         // Look back through previous messages to find a matching tool call
         for (let j = i - 1; j >= 0; j--) {
-          const prevMessage = this.conversationHistory[j];
+          const prevMessage = validatedHistory[j];
           
           if (prevMessage.role === 'assistant' && prevMessage.tool_calls) {
             // Check if any tool call in this message matches our tool message
@@ -96,17 +157,155 @@ export class ConversationManager {
             
             if (matchingToolCall) {
               foundMatchingToolCall = true;
+              matchingAssistantIndex = j;
               break;
             }
           }
         }
         
         if (!foundMatchingToolCall) {
-          console.warn(`Tool message with ID ${message.tool_call_id} has no matching tool call`);
-          // We could choose to remove this message, but for now we'll just log a warning
+          console.warn(`[ConversationManager] Tool message at index ${i} with ID ${message.tool_call_id} has no matching tool call - marking for removal`);
+          messagesToRemove.push(i);
+        }
+        // Ensure there are no other messages between the tool call and the tool response
+        else if (matchingAssistantIndex >= 0) {
+          // Check if there's any non-tool message between the assistant message and this tool message
+          let hasInterveningMessages = false;
+          for (let k = matchingAssistantIndex + 1; k < i; k++) {
+            if (validatedHistory[k].role !== 'tool') {
+              console.warn(`[ConversationManager] Found intervening non-tool message between tool call and response at index ${k} - removing tool response at ${i}`);
+              hasInterveningMessages = true;
+              break;
+            }
+          }
+          
+          if (hasInterveningMessages) {
+            messagesToRemove.push(i);
+          }
         }
       }
     }
+    
+    // Second pass: Identify all assistant messages with tool_calls that don't have corresponding tool messages
+    // or have tool calls in invalid sequence
+    let messagesToFix: {index: number, missingToolResponses: {id: string, response: string}[]}[] = [];
+    let assistantToToolCallMap = new Map<number, string[]>(); // Map assistant index to array of tool call IDs
+    
+    for (let i = 0; i < validatedHistory.length; i++) {
+      const message = validatedHistory[i];
+      
+      // If this is an assistant message with tool_calls
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        const missingToolResponses: {id: string, response: string}[] = [];
+        const toolCallIds: string[] = [];
+        
+        // For each tool call, check if there's a corresponding tool message
+        for (const toolCall of message.tool_calls) {
+          let foundToolResponse = false;
+          toolCallIds.push(toolCall.id);
+          
+          // Look for matching tool response - they must be immediately after this message
+          // and before any other non-tool messages
+          for (let j = i + 1; j < validatedHistory.length; j++) {
+            const nextMessage = validatedHistory[j];
+            
+            // If we hit a non-tool message, stop looking
+            if (nextMessage.role !== 'tool') {
+              break;
+            }
+            
+            if (nextMessage.role === 'tool' && nextMessage.tool_call_id === toolCall.id) {
+              foundToolResponse = true;
+              break;
+            }
+          }
+          
+          if (!foundToolResponse) {
+            console.warn(`[ConversationManager] Assistant message at index ${i} has a tool_call with ID ${toolCall.id} without a corresponding tool response - adding dummy response`);
+            missingToolResponses.push({id: toolCall.id, response: 'Tool execution failed or timed out.'});
+          }
+        }
+        
+        assistantToToolCallMap.set(i, toolCallIds);
+        
+        if (missingToolResponses.length > 0) {
+          messagesToFix.push({index: i, missingToolResponses});
+        }
+      }
+    }
+    
+    // Special handling for streaming situations where we might have incomplete tool calls
+    // Find incomplete streaming assistant messages with partial tool_calls without content
+    for (let i = 0; i < validatedHistory.length; i++) {
+      const message = validatedHistory[i];
+      if (message.role === 'assistant' && 
+          message.tool_calls && 
+          message.tool_calls.length > 0 && 
+          message.tool_calls.some(tc => !tc.function || !tc.function.name || !tc.function.arguments)) {
+        
+        console.warn(`[ConversationManager] Found incomplete tool call at index ${i} - removing to prevent API errors`);
+        messagesToRemove.push(i);
+        
+        // Also remove any tool responses associated with this message
+        const toolCallIds = assistantToToolCallMap.get(i) || [];
+        for (let j = i + 1; j < validatedHistory.length; j++) {
+          const nextMessage = validatedHistory[j];
+          if (nextMessage.role === 'tool' && 
+              nextMessage.tool_call_id && 
+              toolCallIds.includes(nextMessage.tool_call_id)) {
+            console.warn(`[ConversationManager] Removing associated tool response at index ${j}`);
+            messagesToRemove.push(j);
+          }
+        }
+      }
+    }
+    
+    // Remove duplicated indices from messagesToRemove
+    messagesToRemove = [...new Set(messagesToRemove)];
+    
+    // Third pass: Remove invalid messages (in reverse order to preserve indices)
+    messagesToRemove.sort((a, b) => b - a); // Sort in descending order
+    for (const indexToRemove of messagesToRemove) {
+      validatedHistory.splice(indexToRemove, 1);
+    }
+    
+    // Fourth pass: Add missing tool responses after each assistant message with tool_calls
+    // We need to add them in reverse order to maintain the correct indices
+    for (let i = messagesToFix.length - 1; i >= 0; i--) {
+      const {index, missingToolResponses} = messagesToFix[i];
+      
+      // Check if this assistant message still exists after removals
+      if (index < validatedHistory.length && 
+          validatedHistory[index].role === 'assistant' && 
+          validatedHistory[index].tool_calls) {
+        
+        // Insert missing tool responses right after the assistant message
+        for (const missingResponse of missingToolResponses) {
+          validatedHistory.splice(index + 1, 0, {
+            role: 'tool',
+            tool_call_id: missingResponse.id,
+            content: missingResponse.response
+          });
+        }
+      }
+    }
+    
+    console.log(`[ConversationManager] Validation complete. Messages removed: ${messagesToRemove.length}, Messages fixed: ${messagesToFix.length}`);
+    console.log(`[ConversationManager] Final history length: ${validatedHistory.length}`);
+    
+    // Update the actual conversation history with the validated version
+    this.conversationHistory = validatedHistory;
+    
+    return validatedHistory;
+  }
+  
+  /**
+   * Validates the conversation history to ensure all tool messages have valid preceding tool calls
+   * @deprecated Use validateAndSanitizeConversationHistory instead
+   */
+  public validateConversationHistory(): void {
+    // This is kept for backward compatibility
+    this.validateAndSanitizeConversationHistory();
   }
   
   /**
@@ -162,26 +361,56 @@ export class ConversationManager {
       }
     }
     
-    // Format conversation for sending to OpenAI
-    const formattedConversation = this.conversationHistory.map(message => {
-      // Handle different message roles and formats
-      if (message.role === 'tool') {
-        return {
-          role: 'assistant',
-          content: `[Tool Response]: ${typeof message.content === 'string' ? message.content : JSON.stringify(message.content)}`
-        };
-      } else if (message.tool_calls) {
-        return {
-          role: message.role,
-          content: `[Tool Call]: ${JSON.stringify(message.tool_calls.map(tc => tc.function.name))}`
-        };
-      } else {
-        return {
+    // Build a new conversation history that groups tool calls with their responses
+    const formattedConversation: {role: string, content: string}[] = [];
+    
+    // Track which messages to skip (tool responses that have been grouped with their calls)
+    const skipIndices = new Set<number>();
+    
+    // Process the conversation history
+    for (let i = 0; i < this.conversationHistory.length; i++) {
+      // Skip this message if it's already been processed as part of a tool call/response pair
+      if (skipIndices.has(i)) {
+        continue;
+      }
+      
+      const message = this.conversationHistory[i];
+      
+      // If this is an assistant message with tool calls, find all corresponding tool responses
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        // Skip tool call messages entirely when summarizing to avoid breaking the required sequence
+        // We'll just include the regular content from this message if any
+        if (message.content) {
+          formattedConversation.push({
+            role: message.role,
+            content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+          });
+        }
+        
+        // Mark all corresponding tool responses to be skipped
+        for (const toolCall of message.tool_calls) {
+          for (let j = i + 1; j < this.conversationHistory.length; j++) {
+            const potentialResponse = this.conversationHistory[j];
+            if (potentialResponse.role === 'tool' && potentialResponse.tool_call_id === toolCall.id) {
+              skipIndices.add(j); // Mark this tool response to be skipped
+              break;
+            }
+          }
+        }
+      } 
+      // Skip individual tool responses if they weren't paired with a call
+      else if (message.role === 'tool') {
+        // Skip this message as it's a tool response without a call in our processing window
+        continue;
+      }
+      // Regular message (user or assistant without tool calls)
+      else {
+        formattedConversation.push({
           role: message.role,
           content: typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
-        };
+        });
       }
-    });
+    }
     
     try {
       // Use OpenAI to generate a summary

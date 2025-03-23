@@ -1,22 +1,23 @@
 import * as vscode from 'vscode';
-import { OpenAIService as ModularOpenAIService } from './services/OpenAIService';
+import { ServiceFactory } from './services/ServiceFactory';
+import { OpenAIServiceFacade } from './services/OpenAIServiceFacade';
 
 /**
  * OpenAIService - Facade/Adapter for the modular OpenAI service implementation
  * 
  * This class maintains the same public interface as the original OpenAIService
- * but delegates all functionality to the new modular implementation.
+ * but delegates all functionality to the new refactored implementation.
  */
 export class OpenAIService {
   // The actual service implementation
-  private serviceImpl: ModularOpenAIService;
+  private serviceImpl: OpenAIServiceFacade;
   
   // Re-export the onDidUpdateContextFiles event
   public readonly onDidUpdateContextFiles: vscode.Event<string[]>;
   
   constructor() {
-    // Initialize the modular service implementation
-    this.serviceImpl = new ModularOpenAIService();
+    // Initialize the modular service implementation using our factory
+    this.serviceImpl = ServiceFactory.createOpenAIService();
     
     // Connect the event from the implementation
     this.onDidUpdateContextFiles = this.serviceImpl.onDidUpdateContextFiles;
@@ -35,6 +36,8 @@ export class OpenAIService {
   public async processQuery(query: string): Promise<string> {
     return this.serviceImpl.processQuery(query);
   }
+  
+  // Streaming functionality has been removed to avoid issues with tool calls
   
   /**
    * Add a file to the context files list
