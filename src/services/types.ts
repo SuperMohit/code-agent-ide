@@ -19,3 +19,15 @@ export interface APIKeyValidation {
   valid: boolean;
   message?: string;
 }
+
+/**
+ * Represents a summarized version of conversation history
+ * Preserves important context like file references and code snippets
+ */
+export interface SummarizedHistoryMessage {
+  role: 'system';
+  content: string;
+  summary_type: 'conversation_history';
+  file_references?: string[];
+  timestamp: number;
+}

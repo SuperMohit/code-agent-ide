@@ -3,7 +3,7 @@ import { OpenAIClient } from './OpenAIClient';
 import { ConversationManager } from './ConversationManager';
 import { ContextFilesManager } from './ContextFilesManager';
 import { ToolExecutor } from './ToolExecutor';
-import { ConversationMessage, ToolCallResult } from './types';
+import { ConversationMessage, ToolCallResult, SummarizedHistoryMessage } from './types';
 import { systemPrompt } from './systemPrompt';
 import { getToolDefinitions } from '../tools/getTools';
 
@@ -89,6 +89,8 @@ export class OpenAIService {
       let lastError: Error | null = null;
       let iterations = 0;
       const MAX_ITERATIONS = 10; // Safety limit to prevent infinite loops
+      const MAX_PAYLOAD_SIZE = 100000; // Approximate character limit to trigger summarization
+      const MAX_MESSAGES = 20; // Maximum number of messages before we consider summarizing
       
       // Start the agentic loop
       while (!loopComplete && iterations < MAX_ITERATIONS) {
@@ -113,8 +115,62 @@ export class OpenAIService {
             lastError = null; // Reset the error
           }
           
-          // Add conversation history
-          messages = [...messages, ...conversationHistory];
+          // Check if we need to summarize conversation history due to large payload
+          let shouldSummarize = false;
+          let totalPayloadSize = 0;
+          
+          // Estimate payload size
+          for (const message of conversationHistory) {
+            totalPayloadSize += message.content ? message.content.length : 0;
+            if (message.tool_calls) {
+              // Add rough estimate for tool calls
+              message.tool_calls.forEach(tc => {
+                totalPayloadSize += tc.function.name.length;
+                totalPayloadSize += tc.function.arguments.length;
+              });
+            }
+          }
+          
+          console.log(`Estimated payload size: ${totalPayloadSize} characters`);
+          shouldSummarize = totalPayloadSize > MAX_PAYLOAD_SIZE || conversationHistory.length > MAX_MESSAGES;
+          
+          // Add conversation history (either summarized or full)
+          if (shouldSummarize && conversationHistory.length > 2) {
+            console.log('Payload size too large, summarizing conversation history');
+            
+            // Keep the latest user message but summarize the rest
+            const latestMessages = conversationHistory.slice(-2);  // Keep most recent exchange
+            const olderMessages = conversationHistory.slice(0, -2);
+            
+            // Only summarize if we have older messages to summarize
+            if (olderMessages.length > 0) {
+              // Save original history
+              const originalHistory = [...this.conversationManager.getConversationHistory()];
+              
+              // Temporarily replace history with older messages for summarization
+              this.conversationManager.clearConversationHistory();
+              olderMessages.forEach(msg => this.conversationManager.addToConversationHistory(msg));
+              
+              // Generate summary using OpenAI
+              const summary = await this.conversationManager.summarizeConversationHistory(2000);
+              
+              // Restore original history
+              this.conversationManager.clearConversationHistory();
+              originalHistory.forEach(msg => this.conversationManager.addToConversationHistory(msg));
+              
+              // Add summary and latest messages
+              messages.push(summary as any);
+              messages = [...messages, ...latestMessages];
+              
+              console.log('Conversation history summarized successfully');
+            } else {
+              // If not enough history to summarize, just use the full history
+              messages = [...messages, ...conversationHistory];
+            }
+          } else {
+            // Use full conversation history if not summarizing
+            messages = [...messages, ...conversationHistory];
+          }
           
           // Call OpenAI API to get assistant's action/thought
           const response = await client.chat.completions.create({

@@ -2,9 +2,18 @@ import * as vscode from 'vscode';
 import { ChatViewProvider } from './views/ChatViewProvider';
 import { ChatView } from './views/ChatView';
 import { OpenAIService } from './openai-service';
+import { ProjectPathService } from './services/ProjectPathService';
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Activating Quest1 Code Assistant extension');
+  
+  // Initialize ProjectPathService first
+  // This ensures the current project path is available before other services
+  const projectPathService = ProjectPathService.getInstance();
+  context.subscriptions.push({
+    dispose: () => projectPathService.dispose()
+  });
+  console.log('ProjectPathService initialized');
   
   // Initialize OpenAI service
   const openAIService = new OpenAIService();

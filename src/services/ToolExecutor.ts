@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { ContextFilesManager } from './ContextFilesManager';
+import { ProjectPathService } from './ProjectPathService';
 
 // Import tool implementations
 import { createFile } from '../tools/createFile';
@@ -166,14 +167,14 @@ export class ToolExecutor {
     try {
       console.log('Executing find_by_name with args:', JSON.stringify(args, null, 2));
       
-      // Get current workspace folder
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceFolder) {
+      // Get current project path
+      const projectPath = ProjectPathService.getInstance().getCurrentProjectPath();
+      if (!projectPath) {
         return 'Error: No workspace folder is open';
       }
       
-      // Use workspace folder if SearchDirectory is not provided or is invalid
-      const searchDir = args.SearchDirectory || workspaceFolder;
+      // Use current project path if SearchDirectory is not provided or is invalid
+      const searchDir = args.SearchDirectory || projectPath;
       console.log(`Using search directory: ${searchDir}`);
       
       try {
@@ -210,15 +211,15 @@ export class ToolExecutor {
     try {
       console.log('Executing list_dir with args:', JSON.stringify(args, null, 2));
       
-      // Get current workspace folder
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceFolder) {
+      // Get current project path
+      const projectPath = ProjectPathService.getInstance().getCurrentProjectPath();
+      if (!projectPath) {
         return 'Error: No workspace folder is open';
       }
       
       let directoryPath = args.DirectoryPath;
       if (!path.isAbsolute(directoryPath)) {
-        directoryPath = path.join(workspaceFolder, directoryPath);
+        directoryPath = path.join(projectPath, directoryPath);
       }
       
       try {
@@ -252,14 +253,14 @@ export class ToolExecutor {
     try {
       console.log('Executing view_file with args:', JSON.stringify(args, null, 2));
       
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceFolder) {
+      const projectPath = ProjectPathService.getInstance().getCurrentProjectPath();
+      if (!projectPath) {
         return 'Error: No workspace folder is open';
       }
       
       let filePath = args.AbsolutePath;
       if (!path.isAbsolute(filePath)) {
-        filePath = path.join(workspaceFolder, filePath);
+        filePath = path.join(projectPath, filePath);
       }
       
       // Add this file to our context files list
@@ -292,8 +293,8 @@ export class ToolExecutor {
     try {
       console.log('Executing grep_search with args:', JSON.stringify(args, null, 2));
       
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (!workspaceFolder) {
+      const projectPath = ProjectPathService.getInstance().getCurrentProjectPath();
+      if (!projectPath) {
         return 'Error: No workspace folder is open';
       }
       
