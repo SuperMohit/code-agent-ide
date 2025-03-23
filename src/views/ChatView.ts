@@ -9,6 +9,7 @@ export class ChatView {
   private readonly openAIService: OpenAIService;
   private disposables: vscode.Disposable[] = [];
   private messageHistory: { role: string, content: string }[] = [];
+  private contextFiles: string[] = []; // Track files used for context
 
   public static createOrShow(extensionUri: vscode.Uri, openAIService: OpenAIService) {
     const column = vscode.window.activeTextEditor
@@ -47,6 +48,12 @@ export class ChatView {
     // Listen for when the panel is disposed
     // This happens when the user closes the panel or when the panel is closed programmatically
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+
+    // Subscribe to context file updates
+    this.openAIService.onDidUpdateContextFiles(files => {
+      this.contextFiles = files;
+      this.updateContextFilesView();
+    });
 
     // Handle messages from the webview
     this.panel.webview.onDidReceiveMessage(
@@ -131,6 +138,17 @@ export class ChatView {
   private updateWebview() {
     this.panel.webview.html = this.getHtmlForWebview();
   }
+  
+  /**
+   * Update the context files view in the webview
+   */
+  private updateContextFilesView() {
+    // Send the updated context files to the webview
+    this.panel.webview.postMessage({
+      command: 'updateContextFiles',
+      files: this.contextFiles
+    });
+  }
 
   private getHtmlForWebview() {
     // Generate a nonce to use in the CSP
@@ -169,6 +187,69 @@ export class ChatView {
             flex-direction: column;
             height: 100vh;
             overflow: hidden;
+          }
+          
+          /* Context files panel */
+          .context-files {
+            padding: 8px 16px;
+            background: var(--vscode-sideBar-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-size: 12px;
+          }
+          
+          /* Collapsible panel styles */
+          .context-files-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease-out;
+          }
+          
+          .context-files-content.expanded {
+            max-height: 200px;
+          }
+          
+          .context-files-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: bold;
+            color: var(--vscode-foreground);
+            cursor: pointer;
+          }
+          
+          .context-files-header:hover {
+            color: var(--vscode-textLink-foreground);
+          }
+          
+          .context-files-toggle {
+            margin-right: 4px;
+          }
+          
+          .context-files-list {
+            max-height: 100px;
+            overflow-y: auto;
+            font-family: var(--vscode-editor-font-family);
+          }
+          
+          .context-file-item {
+            display: flex;
+            align-items: center;
+            padding: 2px 0;
+          }
+          
+          .context-file-icon {
+            margin-right: 5px;
+          }
+          
+          .context-file-path {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          
+          .context-files-empty {
+            font-style: italic;
+            color: var(--vscode-disabledForeground);
           }
           
           .container {
@@ -315,6 +396,20 @@ export class ChatView {
       </head>
       <body>
         <div class="container">
+          <div class="context-files" id="contextFiles">
+            <div class="context-files-header" id="contextFilesHeader">
+              <div>
+                <span class="context-files-toggle">▶</span>
+                <span>Context Files</span>
+              </div>
+              <span id="contextFileCount">(0)</span>
+            </div>
+            <div class="context-files-content" id="contextFilesContent">
+              <div class="context-files-list" id="contextFilesList">
+                <div class="context-files-empty">No files used for context yet</div>
+              </div>
+            </div>
+          </div>
           <div class="header">
             <h2>Quest1 Code Assistant</h2>
             <div class="actions">
@@ -366,6 +461,20 @@ export class ChatView {
             });
           });
           
+          // Toggle context files panel
+          document.getElementById('contextFilesHeader').addEventListener('click', function() {
+            const content = document.getElementById('contextFilesContent');
+            const toggle = this.querySelector('.context-files-toggle');
+            
+            if (content.classList.contains('expanded')) {
+              content.classList.remove('expanded');
+              toggle.textContent = '▶';
+            } else {
+              content.classList.add('expanded');
+              toggle.textContent = '▼';
+            }
+          });
+          
           // Handle messages from extension
           window.addEventListener('message', event => {
             const message = event.data;
@@ -386,6 +495,10 @@ export class ChatView {
                 userInput.disabled = false;
                 sendButton.disabled = false;
                 break;
+                
+              case 'updateContextFiles':
+                updateContextFiles(message.files);
+                break;
             }
           });
           
@@ -398,6 +511,36 @@ export class ChatView {
               });
               userInput.value = '';
             }
+          }
+          
+          // Update the context files panel
+          function updateContextFiles(files) {
+            const contextFilesList = document.getElementById('contextFilesList');
+            const contextFileCount = document.getElementById('contextFileCount');
+            
+            // Update the file count
+            contextFileCount.textContent = '(' + files.length + ')';
+            
+            // If no files, show empty message
+            if (files.length === 0) {
+              contextFilesList.innerHTML = '<div class="context-files-empty">No files used for context yet</div>';
+              return;
+            }
+            
+            // Build the list of files
+            let html = '';
+            files.forEach(function(file) {
+              // Get just the filename from the path
+              const fileName = file.split('/').pop();
+              html += '\
+                <div class="context-file-item">\
+                  <span class="context-file-icon">📄</span>\
+                  <span class="context-file-path" title="' + file + '">' + fileName + '</span>\
+                </div>\
+              ';
+            });
+            
+            contextFilesList.innerHTML = html;
           }
         </script>
       </body>

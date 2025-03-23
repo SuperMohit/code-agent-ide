@@ -1,7 +1,93 @@
 import { ToolDefinition } from '../types/ToolDefinition';
+import { treeViewToolDefinition } from './treeView';
 
 export function getToolDefinitions(): ToolDefinition[] {
   return [
+    treeViewToolDefinition,
+    {
+      type: 'function',
+      function: {
+        name: 'done',
+        description: 'Signal that you have completed the task and want to exit the agentic loop',
+        parameters: {
+          type: 'object',
+          properties: {
+            summary: {
+              type: 'string',
+              description: 'A brief summary of what was accomplished'
+            }
+          },
+          required: ['summary']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'create_file',
+        description: 'Create a new file with the specified content.',
+        parameters: {
+          type: 'object',
+          properties: {
+            FilePath: {
+              type: 'string',
+              description: 'The absolute path where the file should be created'
+            },
+            Content: {
+              type: 'string',
+              description: 'The content to write to the file'
+            }
+          },
+          required: ['FilePath', 'Content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'update_file',
+        description: 'Update an existing file with new content.',
+        parameters: {
+          type: 'object',
+          properties: {
+            FilePath: {
+              type: 'string',
+              description: 'The absolute path of the file to update'
+            },
+            Content: {
+              type: 'string',
+              description: 'The new content for the file'
+            },
+            InsertAtLine: {
+              type: 'integer',
+              description: 'Optional line number to insert content at. If not provided, the entire file will be replaced.'
+            },
+            InsertAtColumn: {
+              type: 'integer',
+              description: 'Optional column number to insert content at (only used if InsertAtLine is provided)'
+            }
+          },
+          required: ['FilePath', 'Content']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'create_directory',
+        description: 'Create a new directory at the specified path.',
+        parameters: {
+          type: 'object',
+          properties: {
+            DirectoryPath: {
+              type: 'string',
+              description: 'The absolute path of the directory to create'
+            }
+          },
+          required: ['DirectoryPath']
+        }
+      }
+    },
     {
       type: 'function',
       function: {
