@@ -39,6 +39,13 @@ export interface IConversationService {
   validateAndSanitizeConversationHistory(): ConversationMessage[];
   validateConversationHistory(): void;
   summarizeConversationHistory(maxTokens: number): Promise<SummarizedHistoryMessage>;
+  /**
+   * Removes any invalid tool call pairings from the history
+   * This should be used when OpenAI API errors are encountered to ensure both
+   * the tool call and corresponding tool responses are removed together
+   * @returns The number of message pairs removed
+   */
+  sanitizeToolMessages(): number;
 }
 
 /**

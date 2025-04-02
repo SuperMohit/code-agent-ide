@@ -57,6 +57,9 @@ export class OpenAIService {
     try {
       console.log('Processing query with agentic loop:', query);
       
+      // Track if we've encountered an OpenAI API error to ensure we break the loop
+      let encounteredApiError = false;
+      
       // Validate API key
       const validation = this.validateApiKey();
       if (!validation.valid) {
@@ -173,12 +176,38 @@ export class OpenAIService {
           }
           
           // Call OpenAI API to get assistant's action/thought
-          const response = await client.chat.completions.create({
-            model: 'gpt-4o',
-            messages: messages as any,
-            tools: tools,
-            temperature: 0.8,
-          });
+          let response;
+          try {
+            response = await client.chat.completions.create({
+              model: 'gpt-4o',
+              messages: messages as any,
+              tools: tools,
+              temperature: 0.8,
+            });
+          } catch (error) {
+            console.error('OpenAI API error during completion creation:', error);
+            
+            // Handle OpenAI API errors specifically
+            if (error instanceof Error && (
+              error.message.includes('400 Invalid parameter') ||
+              error.message.includes('messages with role \'tool\'') ||
+              error.message.includes('invalid_request_error')
+            )) {
+              console.error('Critical OpenAI API validation error, breaking loop immediately');
+              
+              // Clear the conversation history to avoid the same error happening again
+              console.log('Clearing conversation history due to OpenAI API error');
+              this.conversationManager.clearConversationHistory();
+              
+              // Create an identifiable error that will completely break the loop
+              const apiError = new Error('OPENAI_API_ERROR: ' + error.message);
+              apiError.name = 'OpenAIApiValidationError';
+              throw apiError; // This will bubble up to the AgentLoopService
+            }
+            
+            // Rethrow other errors
+            throw error;
+          }
           
           const assistantMessage = response.choices[0].message;
           
@@ -381,10 +410,19 @@ export class OpenAIService {
           if (isOpenAIError) {
             console.error('Detected OpenAI API error, breaking the loop');
             loopComplete = true;
-            finalResponse = `I'm having trouble processing your request due to an API error. Please try again with a simpler query.`;
+            
+            // First, sanitize the conversation history to remove any invalid tool call/response pairs
+            console.log('Sanitizing conversation history to remove invalid tool messages');
+            this.conversationManager.sanitizeToolMessages();
+            
+            // Then clear the entire conversation history to ensure a clean state
+            this.conversationManager.clearConversationHistory();
+            console.log('Cleared conversation history due to OpenAI API error in iteration');
+            
+            finalResponse = `I encountered an API error while processing your request. The conversation has been reset. Please try again with a simpler query.`;
             
             // Don't set lastError, as we don't want to add this to the conversation history
-            continue;
+            return finalResponse; // IMMEDIATELY return to fully exit the function
           }
           
           // For other errors, continue the loop with retries
@@ -565,7 +603,7 @@ export class OpenAIService {
       model: 'gpt-4',
       messages: messages as any,
       tools: tools,
-      temperature: 0.2,
+      temperature: 0.9,
     });
     
     const assistantMessage = response.choices[0].message;

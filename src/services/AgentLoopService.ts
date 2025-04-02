@@ -60,8 +60,11 @@ export class AgentLoopService implements IAgentLoopService {
     let lastError: Error | null = null;
     let iterations = 0;
     
+    // Add a flag to force exit in case of API errors
+    let forceExitLoop = false;
+    
     // Start the agentic loop
-    while (!loopComplete && iterations < this.MAX_ITERATIONS) {
+    while (!loopComplete && !forceExitLoop && iterations < this.MAX_ITERATIONS) {
       iterations++;
       console.log(`Starting agentic iteration #${iterations}`);
       
@@ -120,14 +123,49 @@ export class AgentLoopService implements IAgentLoopService {
         }
         
         // Call OpenAI API to get assistant's action/thought
-        const response = await this.openAIClient.createChatCompletion(
-          messages as any,
-          tools,
-          'gpt-4o',
-          0.8
-        );
+        let response;
+        let assistantMessage;
         
-        const assistantMessage = response.choices[0].message;
+        try {
+          response = await this.openAIClient.createChatCompletion(
+            messages as any,
+            tools,
+            'gpt-4o',
+            0.8
+          );
+          
+          assistantMessage = response.choices[0].message;
+        } catch (apiError) {
+          console.error('Critical error in OpenAI API call:', apiError);
+          
+          // Check if this is an OpenAI API validation error
+          if (apiError instanceof Error && (
+            apiError.message.includes('400 Invalid parameter') ||
+            apiError.message.includes('messages with role \'tool\' must be a response') ||
+            apiError.message.includes('invalid_request_error')
+          )) {
+            console.error('Detected OpenAI API validation error, breaking loop immediately');
+            
+            // First sanitize the conversation history to remove invalid tool call/response pairs
+            console.log('Sanitizing conversation history to remove invalid tool messages');
+            this.conversationService.sanitizeToolMessages();
+            
+            // Then clear the entire conversation history to ensure a clean state
+            this.conversationService.clearConversationHistory();
+            console.log('Cleared conversation history due to OpenAI API validation error');
+            
+            // Force exit the loop immediately
+            forceExitLoop = true;
+            loopComplete = true;
+            finalResponse = `I encountered an API error while processing your request. The conversation has been reset. Please try your question again with simpler instructions.`;
+            
+            // Break out of the current iteration
+            break;
+          }
+          
+          // Re-throw for normal error handling path
+          throw apiError;
+        }
         
         // Add the assistant's response to the conversation history
         this.conversationService.addToConversationHistory(assistantMessage as any);
@@ -230,46 +268,38 @@ export class AgentLoopService implements IAgentLoopService {
     } catch (error) {
       console.error('Critical error in executeAgentLoop:', error);
       
-      // Check if this is an OpenAI API validation error
-      if (error instanceof Error && (
+      // Check for OpenAI API validation errors
+      const isOpenAIError = error instanceof Error && (
+        error.message.includes('OPENAI_API_ERROR') || 
         error.message.includes('400 Invalid parameter') ||
         error.message.includes('messages with role \'tool\' must be a response') ||
-        error.message.includes('invalid_request_error')
-      )) {
+        error.message.includes('invalid_request_error') ||
+        (error.name === 'OpenAIApiValidationError')
+      );
+      
+      if (isOpenAIError) {
         console.error('Detected OpenAI API validation error, returning friendly error message');
         
         // Clear conversation history to prevent the same error from happening again
         try {
-          // Get a reference to the conversation before clearing it
+          // Get a reference to the conversation before sanitizing
           const conversationHistory = this.conversationService.getConversationHistory();
           console.log(`Current conversation history has ${conversationHistory.length} messages`);
           
-          // Look for potentially problematic tool messages
-          const toolMessagesWithoutCalls = conversationHistory.filter((msg, index) => {
-            if (msg.role !== 'tool') return false;
-            
-            // Check if there's a valid preceding assistant message with matching tool call
-            let hasMatchingToolCall = false;
-            for (let i = index - 1; i >= 0; i--) {
-              const prevMsg = conversationHistory[i];
-              if (prevMsg.role === 'assistant' && prevMsg.tool_calls) {
-                hasMatchingToolCall = prevMsg.tool_calls.some(
-                  (tc: any) => tc.id === msg.tool_call_id
-                );
-                if (hasMatchingToolCall) break;
-              }
-            }
-            
-            return !hasMatchingToolCall;
-          });
+          // First sanitize the conversation history to remove any invalid tool call/response pairs
+          console.log('Sanitizing conversation history to remove invalid tool messages');
+          const sanitizedCount = this.conversationService.sanitizeToolMessages();
+          console.log(`Sanitized ${sanitizedCount} tool messages from conversation history`);
           
-          if (toolMessagesWithoutCalls.length > 0) {
-            console.error(`Found ${toolMessagesWithoutCalls.length} problematic tool messages without matching tool calls`);
-          }
-          
-          // Clear the conversation history to prevent the same error
+          // IMPORTANT: Then clear the entire conversation history to prevent the same error
           this.conversationService.clearConversationHistory();
           console.log('Cleared conversation history due to OpenAI API validation error');
+          
+          // Add a single system message to the conversation to reset context
+          this.conversationService.addToConversationHistory({
+            role: 'system',
+            content: 'The conversation has been reset due to an API error.'
+          });
         } catch (clearError) {
           console.error('Error while trying to clear conversation history:', clearError);
         }

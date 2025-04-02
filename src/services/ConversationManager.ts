@@ -30,6 +30,80 @@ export class ConversationManager {
   public clearConversationHistory(): void {
     this.conversationHistory = [];
   }
+  
+  /**
+   * Removes any invalid tool call pairings from the history
+   * This should be used when OpenAI API errors are encountered to ensure both
+   * the tool call and corresponding tool responses are removed together
+   * @returns The number of message pairs removed
+   */
+  public sanitizeToolMessages(): number {
+    if (this.conversationHistory.length === 0) {
+      return 0;
+    }
+    
+    console.log('Sanitizing conversation history to remove invalid tool call pairings');
+    
+    // Step 1: Identify all assistant messages with tool calls and all tool response messages
+    const assistantToolCalls: Map<string, number> = new Map(); // tool_call_id -> index
+    const toolResponses: Map<string, number[]> = new Map(); // tool_call_id -> indices
+    
+    // Collect all tool calls and responses
+    for (let i = 0; i < this.conversationHistory.length; i++) {
+      const message = this.conversationHistory[i];
+      
+      // Assistant messages with tool calls
+      if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
+        for (const toolCall of message.tool_calls) {
+          assistantToolCalls.set(toolCall.id, i);
+        }
+      }
+      
+      // Tool response messages
+      if (message.role === 'tool' && message.tool_call_id) {
+        const indices = toolResponses.get(message.tool_call_id) || [];
+        indices.push(i);
+        toolResponses.set(message.tool_call_id, indices);
+      }
+    }
+    
+    // Step 2: Find orphaned tool responses (responses without matching tool calls)
+    const orphanedToolResponses: number[] = [];
+    toolResponses.forEach((indices, toolCallId) => {
+      if (!assistantToolCalls.has(toolCallId)) {
+        orphanedToolResponses.push(...indices);
+      }
+    });
+    
+    // Step 3: Find orphaned tool calls (tool calls without matching responses)
+    const orphanedToolCalls: Set<number> = new Set();
+    assistantToolCalls.forEach((index, toolCallId) => {
+      if (!toolResponses.has(toolCallId)) {
+        orphanedToolCalls.add(index);
+      }
+    });
+    
+    // If no orphaned messages, nothing to clean up
+    if (orphanedToolResponses.length === 0 && orphanedToolCalls.size === 0) {
+      console.log('No orphaned tool messages found');
+      return 0;
+    }
+    
+    console.log(`Found ${orphanedToolResponses.length} orphaned tool responses and ${orphanedToolCalls.size} orphaned tool calls`);
+    
+    // Step 4: Remove orphaned messages from history (in reverse order to avoid index shifting)
+    const allOrphanedIndices = [...orphanedToolResponses, ...Array.from(orphanedToolCalls)];
+    allOrphanedIndices.sort((a, b) => b - a); // Sort in descending order
+    
+    // Remove all orphaned messages
+    for (const index of allOrphanedIndices) {
+      this.conversationHistory.splice(index, 1);
+    }
+    
+    console.log(`Removed ${allOrphanedIndices.length} orphaned tool messages`);
+    
+    return allOrphanedIndices.length;
+  }
 
   /**
    * Safely truncates the conversation history while maintaining valid message pairings
