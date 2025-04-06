@@ -64,21 +64,18 @@ export class CodeActionService implements ICodeActionService {
       diagnostic.range.endCharacter
     );
     
-    // Create a VS Code diagnostic to get accurate code actions
     const vscodeDiagnostic = new vscode.Diagnostic(
       range,
       diagnostic.message,
-      diagnostic.severity // Already a vscode.DiagnosticSeverity
+      diagnostic.severity
     );
     
-    // Add the diagnostic code if available
     if (diagnostic.code) {
       vscodeDiagnostic.code = diagnostic.code;
     }
     
     const uri = vscode.Uri.file(filePath);
-    
-    // Get code actions from the language server, specifically for fixing this diagnostic
+
     const codeActions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
       'vscode.executeCodeActionProvider',
       uri,
@@ -90,14 +87,13 @@ export class CodeActionService implements ICodeActionService {
       return [];
     }
     
-    // Filter actions that specifically fix this diagnostic
     const relevantActions = codeActions.filter(action => {
       if (!action.diagnostics) return false;
       
       return action.diagnostics.some(d => 
         d.message === diagnostic.message &&
         d.range.isEqual(range) &&
-        d.severity === diagnostic.severity // Already a vscode.DiagnosticSeverity
+        d.severity === diagnostic.severity
       );
     });
     
@@ -112,7 +108,7 @@ export class CodeActionService implements ICodeActionService {
    * @returns True if applied successfully
    */
   public async applyCodeAction(
-    _filePath: string, // Prefix with underscore to indicate it's intentionally unused
+    _filePath: string, 
     codeAction: CodeActionInfo
   ): Promise<boolean> {
     if (!codeAction.edit || !codeAction.edit.changes) {
@@ -121,10 +117,8 @@ export class CodeActionService implements ICodeActionService {
     }
     
     try {
-      // Create a workspace edit to apply the changes
       const workspaceEdit = new vscode.WorkspaceEdit();
       
-      // Add each change to the edit
       Object.entries(codeAction.edit.changes).forEach(([fileUri, edits]) => {
         const uri = vscode.Uri.parse(fileUri);
         
@@ -165,30 +159,26 @@ export class CodeActionService implements ICodeActionService {
     try {
       const uri = vscode.Uri.file(filePath);
       
-      // Get the document
       const document = await vscode.workspace.openTextDocument(uri);
       
-      // Get all diagnostics for the file
       const diagnostics = vscode.languages.getDiagnostics(uri);
       
       if (diagnostics.length === 0) {
         return `No issues found in ${filePath}, so no quick fixes are available.`;
       }
-      
-      // Get quick fixes for each diagnostic
+
       let result = `Quick fixes available for ${filePath}:\\n`;
       
       for (let i = 0; i < diagnostics.length; i++) {
         const diagnostic = diagnostics[i];
         const lineText = document.lineAt(diagnostic.range.start.line).text.trim();
         
-        // Convert diagnostic to our format for code action lookup
         const diagnosticInfo: DiagnosticInfo = {
           message: diagnostic.message,
-          severity: diagnostic.severity, // Keep as vscode.DiagnosticSeverity
+          severity: diagnostic.severity,
           source: diagnostic.source || '',
           code: diagnostic.code?.toString() || '',
-          filePath: uri.fsPath, // Add missing filePath property
+          filePath: uri.fsPath, 
           range: {
             startLine: diagnostic.range.start.line,
             startCharacter: diagnostic.range.start.character,
@@ -197,7 +187,6 @@ export class CodeActionService implements ICodeActionService {
           }
         };
         
-        // Get code actions for this diagnostic
         const codeActions = await this.getCodeActionsForDiagnostic(filePath, diagnosticInfo);
         
         if (codeActions.length > 0) {
@@ -231,7 +220,6 @@ export class CodeActionService implements ICodeActionService {
         isPreferred: !!action.isPreferred
       };
       
-      // Include edit information if available
       if (action.edit) {
         result.edit = {
           changes: {}

@@ -21,10 +21,8 @@ export async function applyCodeAction(args: {
       return 'Error: CodeAction is required';
     }
     
-    // Get the code action service
     const codeActionService = ServiceFactory.getCodeActionService();
     
-    // Apply the code action
     const success = await codeActionService.applyCodeAction(
       args.FilePath,
       args.CodeAction

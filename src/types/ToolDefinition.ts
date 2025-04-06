@@ -1,6 +1,5 @@
-// This defines the structure for OpenAI tools that match the OpenAI API expected format
 export interface ToolDefinition {
-  type: "function";  // Must be the string literal "function" to match OpenAI's API
+  type: "function";
   function: {
     name: string;
     description: string;

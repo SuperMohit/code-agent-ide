@@ -94,22 +94,19 @@ export class OpenAIService {
       const MAX_ITERATIONS = 5; // Safety limit to prevent infinite loops
       const MAX_PAYLOAD_SIZE = 10000; // Approximate character limit to trigger summarization
       const MAX_MESSAGES = 10; // Maximum number of messages before we consider summarizing
-      
-      // Start the agentic loop
+
       while (!loopComplete && iterations < MAX_ITERATIONS) {
         iterations++;
         console.log(`Starting agentic iteration #${iterations}`);
         
         try {
-          // Get current conversation history
+
           const conversationHistory = this.conversationManager.getConversationHistory();
           
-          // Create messages for this iteration
           let messages = [
             { role: 'system', content: systemPrompt }
           ];
           
-          // If there was an error in the previous iteration, add a special message about it
           if (lastError) {
             messages.push({
               role: 'user',
@@ -118,11 +115,9 @@ export class OpenAIService {
             lastError = null; // Reset the error
           }
           
-          // Check if we need to summarize conversation history due to large payload
           let shouldSummarize = false;
           let totalPayloadSize = 0;
           
-          // Estimate payload size
           for (const message of conversationHistory) {
             totalPayloadSize += message.content ? message.content.length : 0;
             if (message.tool_calls) {
@@ -136,46 +131,35 @@ export class OpenAIService {
           
           console.log(`Estimated payload size: ${totalPayloadSize} characters`);
           shouldSummarize = totalPayloadSize > MAX_PAYLOAD_SIZE || conversationHistory.length > MAX_MESSAGES;
-          
-          // Add conversation history (either summarized or full)
+
           if (shouldSummarize && conversationHistory.length > 2) {
             console.log('Payload size too large, summarizing conversation history');
             
-            // Keep the latest user message but summarize the rest
             const latestMessages = conversationHistory.slice(-2);  // Keep most recent exchange
             const olderMessages = conversationHistory.slice(0, -2);
             
-            // Only summarize if we have older messages to summarize
             if (olderMessages.length > 0) {
-              // Save original history
               const originalHistory = [...this.conversationManager.getConversationHistory()];
               
-              // Temporarily replace history with older messages for summarization
               this.conversationManager.clearConversationHistory();
               olderMessages.forEach(msg => this.conversationManager.addToConversationHistory(msg));
               
-              // Generate summary using OpenAI
               const summary = await this.conversationManager.summarizeConversationHistory(2000);
               
-              // Restore original history
               this.conversationManager.clearConversationHistory();
               originalHistory.forEach(msg => this.conversationManager.addToConversationHistory(msg));
               
-              // Add summary and latest messages
               messages.push(summary as any);
               messages = [...messages, ...latestMessages];
               
               console.log('Conversation history summarized successfully');
             } else {
-              // If not enough history to summarize, just use the full history
               messages = [...messages, ...conversationHistory];
             }
           } else {
-            // Use full conversation history if not summarizing
             messages = [...messages, ...conversationHistory];
           }
           
-          // Call OpenAI API to get assistant's action/thought
           let response;
           try {
             response = await client.chat.completions.create({
@@ -187,7 +171,7 @@ export class OpenAIService {
           } catch (error) {
             console.error('OpenAI API error during completion creation:', error);
             
-            // Handle OpenAI API errors specifically
+
             if (error instanceof Error && (
               error.message.includes('400 Invalid parameter') ||
               error.message.includes('messages with role \'tool\'') ||
@@ -195,11 +179,9 @@ export class OpenAIService {
             )) {
               console.error('Critical OpenAI API validation error, breaking loop immediately');
               
-              // Clear the conversation history to avoid the same error happening again
               console.log('Clearing conversation history due to OpenAI API error');
               this.conversationManager.clearConversationHistory();
               
-              // Create an identifiable error that will completely break the loop
               const apiError = new Error('OPENAI_API_ERROR: ' + error.message);
               apiError.name = 'OpenAIApiValidationError';
               throw apiError; // This will bubble up to the AgentLoopService
@@ -211,10 +193,9 @@ export class OpenAIService {
           
           const assistantMessage = response.choices[0].message;
           
-          // Add the assistant's response to the conversation history
           this.conversationManager.addToConversationHistory(assistantMessage as any);
           
-          // Check if we're done (no tool calls)
+
           if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
             console.log('No tool calls, completing agentic loop');
             finalResponse = assistantMessage.content || '';
@@ -222,10 +203,9 @@ export class OpenAIService {
             continue;
           }
           
-          // Process tool calls
           console.log(`Processing ${assistantMessage.tool_calls.length} tool calls`);
           
-          // Check if the 'done' tool is called
+
           const doneToolCall = assistantMessage.tool_calls.find(toolCall => 
             toolCall.function.name === 'done'
           );
@@ -234,29 +214,26 @@ export class OpenAIService {
             console.log('Done tool detected, breaking the agentic loop');
             
             try {
-              // Execute the done tool to get the summary
+
               const functionArgs = JSON.parse(doneToolCall.function.arguments);
               const output = await this.toolExecutor.executeToolWithTimeout(
                 'done',
                 functionArgs,
-                5000 // Short timeout for done tool
+                5000 
               );
               
-              // Add the tool response to the conversation history
               this.conversationManager.addToConversationHistory({
                 role: 'tool',
                 tool_call_id: doneToolCall.id,
                 content: output
               });
               
-              // Set finalResponse to the summary and complete the loop
               finalResponse = `Task completed: ${functionArgs.summary}`;
               loopComplete = true;
               continue;
             } catch (error) {
               console.error('Error executing done tool:', error);
               
-              // Check if this is an OpenAI API error
               const isOpenAIError = error instanceof Error && 
                 (error.message.includes('400 Invalid parameter') || 
                  error.message.includes('invalid_request_error') ||
@@ -269,7 +246,6 @@ export class OpenAIService {
                 continue;
               }
               
-              // For non-OpenAI API errors, add a placeholder response to maintain API validity
               const errorMessage = error instanceof Error ? error.message : String(error);
               this.conversationManager.addToConversationHistory({
                 role: 'tool',
@@ -279,26 +255,21 @@ export class OpenAIService {
               
               lastError = error instanceof Error ? error : new Error(String(error));
               
-              // Sleep for 1 second before continuing to prevent rapid retries
               await this.sleep(1000);
               continue;
             }
           }
           
-          // Flag to track if any breaking changes need user permission
           let needsPermission = false;
           let permissionMessage = '';
           
-          // Group tools that need permission
           const breakingTools = assistantMessage.tool_calls.filter(toolCall => {
             return breakingChangeTools.includes(toolCall.function.name);
           });
-          
-          // Ask for permission if there are breaking changes
+
           if (breakingTools.length > 0) {
             needsPermission = true;
             
-            // Format a user-friendly permission message
             permissionMessage = 'I need your permission to perform the following operations:\n\n';
             
             for (const toolCall of breakingTools) {
@@ -322,11 +293,8 @@ export class OpenAIService {
             }
             
             permissionMessage += '\nDo you want to allow these operations? (yes/no)';
-            
-            // Important: Add placeholder responses for all tool calls to satisfy OpenAI's requirement
-            // that every tool call must have a corresponding response
+
             for (const toolCall of assistantMessage.tool_calls) {
-              // Add a pending placeholder response for each tool call
               this.conversationManager.addToConversationHistory({
                 role: 'tool',
                 tool_call_id: toolCall.id,
@@ -334,26 +302,21 @@ export class OpenAIService {
               });
             }
             
-            // Add the permission request to the conversation
             this.conversationManager.addToConversationHistory({
               role: 'assistant',
               content: permissionMessage
             });
             
-            // Return here and wait for user's permission
             return permissionMessage;
           }
           
-          // Execute tool calls (if we don't need permission)
           for (const toolCall of assistantMessage.tool_calls) {
             console.log(`Executing tool call: ${toolCall.function.name}`);
             
             try {
-              // Parse the function arguments
               const functionName = toolCall.function.name;
               const functionArgs = JSON.parse(toolCall.function.arguments);
               
-              // Execute the tool
               const output = await this.toolExecutor.executeToolWithTimeout(
                 functionName, 
                 functionArgs,
@@ -390,10 +353,8 @@ export class OpenAIService {
                 content: `Error executing tool: ${errorMessage}`
               });
               
-              // Save the error for the next iteration
               lastError = error instanceof Error ? error : new Error(String(error));
               
-              // Sleep for 1 second to prevent rapid retries after an error
               await this.sleep(1000);
             }
           }
@@ -401,7 +362,6 @@ export class OpenAIService {
         } catch (error) {
           console.error(`Error in agentic loop iteration #${iterations}:`, error);
           
-          // Check if this is an OpenAI API error
           const isOpenAIError = error instanceof Error && 
             (error.message.includes('400 Invalid parameter') || 
              error.message.includes('invalid_request_error') ||
@@ -411,27 +371,21 @@ export class OpenAIService {
             console.error('Detected OpenAI API error, breaking the loop');
             loopComplete = true;
             
-            // First, sanitize the conversation history to remove any invalid tool call/response pairs
             console.log('Sanitizing conversation history to remove invalid tool messages');
             this.conversationManager.sanitizeToolMessages();
             
-            // Then clear the entire conversation history to ensure a clean state
             this.conversationManager.clearConversationHistory();
             console.log('Cleared conversation history due to OpenAI API error in iteration');
             
             finalResponse = `I encountered an API error while processing your request. The conversation has been reset. Please try again with a simpler query.`;
             
-            // Don't set lastError, as we don't want to add this to the conversation history
-            return finalResponse; // IMMEDIATELY return to fully exit the function
+            return finalResponse;
           }
           
-          // For other errors, continue the loop with retries
           lastError = error instanceof Error ? error : new Error(String(error));
           
-          // Sleep for 1 second before continuing to prevent rapid retries
           await this.sleep(1000);
           
-          // If we've hit the maximum number of retries, exit the loop
           if (iterations >= MAX_ITERATIONS - 1) {
             loopComplete = true;
             finalResponse = `I encountered multiple errors while processing your request. Last error: ${lastError.message}`;
@@ -439,12 +393,10 @@ export class OpenAIService {
         }
       }
       
-      // Return the final response
       return finalResponse;
     } catch (error) {
       console.error('Critical error in processQuery:', error);
       
-      // Try with a simplified approach if the tool-based query fails
       try {
         return await this.processQuerySimple(query);
       } catch (fallbackError) {
@@ -460,23 +412,17 @@ export class OpenAIService {
   public async continueWithPermission(userResponse: string): Promise<string> {
     console.log('Continuing with permission response:', userResponse);
     
-    // Check if the user granted permission
     const permissionGranted = userResponse.toLowerCase().includes('yes');
     
-    // Add the user's response to the conversation history
     this.conversationManager.addToConversationHistory({
       role: 'user',
       content: userResponse
     });
     
-    // Handle the case differently based on permission
     if (permissionGranted) {
-      // Execute the pending tool calls that were previously shown to the user
-      // First, find the most recent assistant message with tool calls
       const history = this.conversationManager.getConversationHistory();
       let lastAssistantWithTools = null;
       
-      // Find the most recent assistant message with tool calls (going backwards)
       for (let i = history.length - 1; i >= 0; i--) {
         const message = history[i];
         if (message.role === 'assistant' && message.tool_calls && message.tool_calls.length > 0) {
@@ -488,7 +434,6 @@ export class OpenAIService {
       if (lastAssistantWithTools && lastAssistantWithTools.tool_calls) {
         console.log('Found pending tool calls to execute');
         
-        // Execute each tool call that required permission
         for (const toolCall of lastAssistantWithTools.tool_calls) {
           try {
             const functionName = toolCall.function.name;
@@ -496,18 +441,15 @@ export class OpenAIService {
             
             console.log(`Executing permitted tool call: ${functionName}`);
             
-            // Execute the tool
             const output = await this.toolExecutor.executeToolWithTimeout(
               functionName, 
               functionArgs,
               30000 // 30 second timeout
             );
             
-            // Find and update the existing placeholder response for this tool call
             const history = this.conversationManager.getConversationHistory();
             let placeholderResponseFound = false;
             
-            // Look for the placeholder response and update it
             for (let i = 0; i < history.length; i++) {
               const message = history[i];
               if (
@@ -515,7 +457,6 @@ export class OpenAIService {
                 message.tool_call_id === toolCall.id && 
                 message.content === 'Waiting for user permission...'
               ) {
-                // Replace the placeholder with the actual output
                 history[i].content = output;
                 placeholderResponseFound = true;
                 console.log(`Updated placeholder response for tool call ${toolCall.id}`);
@@ -523,7 +464,6 @@ export class OpenAIService {
               }
             }
             
-            // If no placeholder was found, add a new response (should not happen, but just in case)
             if (!placeholderResponseFound) {
               console.log(`No placeholder found for tool call ${toolCall.id}, adding new response`);
               this.conversationManager.addToConversationHistory({
@@ -535,11 +475,9 @@ export class OpenAIService {
           } catch (error) {
             console.error('Error executing tool call:', error);
             
-            // Find and update the existing placeholder response for this tool call
             const history = this.conversationManager.getConversationHistory();
             let placeholderResponseFound = false;
             
-            // Look for the placeholder response and update it with the error
             for (let i = 0; i < history.length; i++) {
               const message = history[i];
               if (
@@ -547,15 +485,12 @@ export class OpenAIService {
                 message.tool_call_id === toolCall.id && 
                 message.content === 'Waiting for user permission...'
               ) {
-                // Replace the placeholder with the error message
                 history[i].content = `Error: ${error}`;
                 placeholderResponseFound = true;
                 console.log(`Updated placeholder with error for tool call ${toolCall.id}`);
                 break;
               }
             }
-            
-            // If no placeholder was found, add a new error response (shouldn't happen)
             if (!placeholderResponseFound) {
               console.log(`No placeholder found for tool call ${toolCall.id}, adding new error response`);
               this.conversationManager.addToConversationHistory({
@@ -571,21 +506,16 @@ export class OpenAIService {
       }
     }
     
-    // Get OpenAI client
     const client = this.openaiClient.getClient();
     
-    // Get current conversation history with tool responses
     const conversationHistory = this.conversationManager.getConversationHistory();
     
-    // Get tool definitions
     const tools = getToolDefinitions();
     
-    // Create messages for this request
     const messages = [
       { role: 'system', content: systemPrompt }
     ];
     
-    // Add guidance about the permission decision if it was denied
     if (!permissionGranted) {
       messages.push({
         role: 'system',
@@ -593,12 +523,10 @@ export class OpenAIService {
       } as any);
     }
     
-    // Add the conversation history
     messages.push(...conversationHistory);
     
     console.log('Sending conversation with', messages.length, 'messages to OpenAI');
     
-    // Call OpenAI API to continue the conversation
     const response = await client.chat.completions.create({
       model: 'gpt-4',
       messages: messages as any,
@@ -608,15 +536,11 @@ export class OpenAIService {
     
     const assistantMessage = response.choices[0].message;
     
-    // Add the assistant's response to the conversation history
     this.conversationManager.addToConversationHistory(assistantMessage as any);
     
-    // If there are new tool calls in the response, process them
     if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-      // Continue the agentic loop with an empty query to process these new tool calls
       return this.processQuery('');
     } else {
-      // Return the assistant's text response
       return assistantMessage.content || '';
     }
   }
@@ -629,31 +553,25 @@ export class OpenAIService {
     try {
       console.log('Processing simple query (fallback):', query);
       
-      // Validate API key
       const validation = this.validateApiKey();
       if (!validation.valid) {
         throw new Error(validation.message);
       }
       
-      // Get OpenAI client
       const client = this.openaiClient.getClient();
       
-      // Add user message to conversation history
       this.conversationManager.addToConversationHistory({
         role: 'user',
         content: query
       });
       
-      // Get current conversation history
       const conversationHistory = this.conversationManager.getConversationHistory();
       
-      // Add system message at the beginning
       const messages = [
         { role: 'system', content: 'You are a helpful coding assistant. Due to technical limitations, you cannot use tools in this conversation.' },
         ...conversationHistory
       ];
       
-      // Make the API call to get the assistant's response
       const response = await client.chat.completions.create({
         model: 'gpt-4',
         messages: messages as any,
@@ -662,10 +580,8 @@ export class OpenAIService {
       
       const assistantMessage = response.choices[0].message;
       
-      // Add the assistant's response to the conversation history
       this.conversationManager.addToConversationHistory(assistantMessage as any);
       
-      // Return the assistant's response
       return assistantMessage.content || '';
     } catch (error) {
       console.error('Error processing simple query:', error);
