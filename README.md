@@ -1,4 +1,4 @@
-# Quest1 Code Assistant
+# Quest1 Code Assistant - PoC
 
 A Visual Studio Code extension that provides a chat interface for code assistance.
 
