@@ -1,5 +1,17 @@
+import * as vscode from 'vscode';
+
 export async function runCommand(commandLine: string, cwd: string): Promise<string> {
-  // Use variables to avoid unused parameter warnings
-  const commandInfo = `${commandLine} (in ${cwd})`;
-  return `Command execution (${commandInfo}):\n\n(This is a placeholder - actual implementation would execute the command)`;
+  // Create a new terminal with the specified working directory
+  const terminal = vscode.window.createTerminal({
+    name: 'Command Runner',
+    cwd: cwd
+  });
+  // Show the terminal to the user
+  terminal.show();
+  // Send the command to the terminal for execution
+  terminal.sendText(commandLine);
+
+  // Return an immediate message indicating that the command has been sent.
+  // Note: The actual execution output is not captured via this API.
+  return `Started execution of "${commandLine}" in terminal with working directory "${cwd}"`;
 }
