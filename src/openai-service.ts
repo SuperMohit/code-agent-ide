@@ -15,9 +15,9 @@ export class OpenAIService {
   // Re-export the onDidUpdateContextFiles event
   public readonly onDidUpdateContextFiles: vscode.Event<string[]>;
   
-  constructor() {
+  constructor(projectPath : string) {
     // Initialize the modular service implementation using our factory
-    this.serviceImpl = ServiceFactory.createOpenAIService();
+    this.serviceImpl = ServiceFactory.createOpenAIService(projectPath);
     
     // Connect the event from the implementation
     this.onDidUpdateContextFiles = this.serviceImpl.onDidUpdateContextFiles;

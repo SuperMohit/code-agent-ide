@@ -297,6 +297,13 @@ export function getToolDefinitions(): ToolDefinition[] {
           required: ['CommandLine', 'Cwd']
         }
       }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'checkDiagnostics',
+        description: 'Fetch all the problems and warnings for the current workspace. Check this after every edit to ensure no errors are introduced.'
+      }
     }
   ];
 }

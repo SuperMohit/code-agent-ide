@@ -17,24 +17,27 @@ export class ServiceFactory {
   private static diagnosticsService: IDiagnosticsService;
   private static codeActionService: ICodeActionService;
   private static symbolInformationService: ISymbolInformationService;
+
   
   /**
    * Create a new instance of the OpenAI service facade with all required dependencies
    * @returns A configured OpenAIServiceFacade instance
    */
-  public static createOpenAIService(): OpenAIServiceFacade {
+  public static createOpenAIService(projectPath: string): OpenAIServiceFacade {
     // Create the core service implementations
     const openAIClient = new OpenAIClientServiceImpl();
     const conversationManager = new ConversationManager();
     const contextFilesManager = new ContextFilesManager();
     const toolExecutor = new ToolExecutor(contextFilesManager);
+
     
     // Create and return the facade that coordinates all services
     return OpenAIServiceFacade.create(
       openAIClient,
       conversationManager,
       contextFilesManager,
-      toolExecutor
+      toolExecutor,
+      projectPath || ''
     );
   }
   

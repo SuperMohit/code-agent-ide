@@ -75,7 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('ProjectPathService initialized');
   
   // Initialize OpenAI service
-  const openAIService = new OpenAIService();
+  const openAIService = new OpenAIService(projectPathService.getCurrentProjectPath() || '');
   
   // Register the ChatViewProvider for the sidebar
   const chatViewProvider = new ChatViewProvider(context.extensionUri, openAIService);

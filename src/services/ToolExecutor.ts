@@ -119,8 +119,8 @@ export class ToolExecutor implements IToolExecutorService {
       case 'run_command':
         return this.executeRunCommand(functionArgs);
         
-      case 'check_diagnostics':
-        return this.executeCheckDiagnostics(functionArgs);
+      case 'checkDiagnostics':
+        return this.executeCheckDiagnostics();
       
       default:
         return `Tool ${functionName} is not implemented yet.`;
@@ -492,10 +492,10 @@ export class ToolExecutor implements IToolExecutorService {
   /**
    * Execute the check_diagnostics tool to analyze code problems
    */
-  private async executeCheckDiagnostics(args: any): Promise<string> {
+  private async executeCheckDiagnostics(): Promise<string> {
     try {
-      console.log('Executing check_diagnostics with args:', JSON.stringify(args, null, 2));
-      return await checkDiagnostics(args);
+      console.log('Executing check_diagnostics');
+      return await checkDiagnostics();
     } catch (error) {
       console.error('Error executing check_diagnostics tool:', error);
       return `Error executing check_diagnostics: ${error}`;

@@ -3,7 +3,7 @@ export interface ToolDefinition {
   function: {
     name: string;
     description: string;
-    parameters: {
+    parameters?: {
       type: string;
       properties: Record<string, any>;
       required?: string[];

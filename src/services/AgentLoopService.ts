@@ -26,7 +26,8 @@ export class AgentLoopService implements IAgentLoopService {
     private readonly conversationService: IConversationService,
     private readonly messageFormatter: IMessageFormatterService,
     private readonly toolCallProcessor: IToolCallProcessorService,
-    private readonly responseGenerator: IResponseGeneratorService
+    private readonly responseGenerator: IResponseGeneratorService,
+    private readonly projectPath: string
   ) {}
 
   /**
@@ -36,6 +37,15 @@ export class AgentLoopService implements IAgentLoopService {
    */
   public async executeAgentLoop(query: string): Promise<string> {
     console.log('Processing query with agentic loop:', query);
+    
+    console.log('Project Path in AgentLoopService:', this.projectPath);
+
+
+
+    // append project path to system prompt
+    const withProjectPathSystemPrompt = `${systemPrompt}\n\nRemember you are working in project path: ${this.projectPath}`;
+
+
     
     try {
     
@@ -66,7 +76,7 @@ export class AgentLoopService implements IAgentLoopService {
         const conversationHistory = this.conversationService.getConversationHistory();
         
         let messages = this.messageFormatter.formatMessages(
-          systemPrompt, 
+          withProjectPathSystemPrompt, 
           conversationHistory, 
           lastError
         );
@@ -80,8 +90,9 @@ export class AgentLoopService implements IAgentLoopService {
         if (shouldSummarize && conversationHistory.length > 2) {
           console.log('Payload size too large, summarizing conversation history');
           
-          const latestMessages = conversationHistory.slice(-2);
-          const olderMessages = conversationHistory.slice(0, -2);
+          // Keep last 4 messages and summarize the rest
+          const latestMessages = conversationHistory.slice(-4);
+          const olderMessages = conversationHistory.slice(0, -4);
           
           if (olderMessages.length > 0) {
             const originalHistory = [...this.conversationService.getConversationHistory()];
@@ -95,7 +106,7 @@ export class AgentLoopService implements IAgentLoopService {
             originalHistory.forEach(msg => this.conversationService.addToConversationHistory(msg));
             
             messages = [
-              { role: 'system', content: systemPrompt },
+              { role: 'system', content: withProjectPathSystemPrompt },
               { role: 'assistant', content: typeof summary === 'string' ? summary : (summary as any).content || JSON.stringify(summary) },
               ...latestMessages
             ];

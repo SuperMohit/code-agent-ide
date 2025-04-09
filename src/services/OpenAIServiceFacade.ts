@@ -20,7 +20,8 @@ export class OpenAIServiceFacade {
     private readonly openAIClient: IOpenAIClientService,
     private readonly conversationService: IConversationService,
     private readonly contextFilesService: IContextFilesService,
-    private readonly toolExecutorService: IToolExecutorService
+    private readonly toolExecutorService: IToolExecutorService,
+    private readonly projectPath: string
   ) {
     // Setup event forwarding
     this.onDidUpdateContextFiles = this.contextFilesService.onDidUpdateContextFiles;
@@ -39,7 +40,8 @@ export class OpenAIServiceFacade {
       this.conversationService,
       messageFormatter,
       toolCallProcessor,
-      responseGenerator
+      responseGenerator,
+      this.projectPath
     );
   }
   
@@ -50,13 +52,15 @@ export class OpenAIServiceFacade {
     openAIClient: IOpenAIClientService,
     conversationService: IConversationService,
     contextFilesService: IContextFilesService,
-    toolExecutorService: IToolExecutorService
+    toolExecutorService: IToolExecutorService,
+    projectPath: string
   ): OpenAIServiceFacade {
     return new OpenAIServiceFacade(
       openAIClient,
       conversationService,
       contextFilesService,
-      toolExecutorService
+      toolExecutorService,
+      projectPath
     );
   }
   
