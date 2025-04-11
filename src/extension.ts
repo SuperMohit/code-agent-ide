@@ -83,6 +83,9 @@ async function startWorker(directoryPath: string) {
       return;
     }
 
+    const projectPathService = ProjectPathService.getInstance();
+    const projectPath = projectPathService.getCurrentProjectPath();
+
     // Create the worker first
     worker = new Worker(path.join(__dirname, 'worker.js'));
 
@@ -91,7 +94,12 @@ async function startWorker(directoryPath: string) {
       worker.on('message', (event: { success: boolean; error?: string }) => {
         if (event.success) {
           // Now send the directory path
-          worker?.postMessage({ type: 'process', data: directoryPath });
+          worker?.postMessage({ 
+            type: 'process', 
+            data: {
+              directoryPath: directoryPath,
+              projectPath: projectPath
+            } });
         } else {
           vscode.window.showErrorMessage(`Error in worker initialization: ${event.error}`);
         }
@@ -112,7 +120,13 @@ async function startWorker(directoryPath: string) {
       });
 
       // Initialize the worker with the API key
-      worker.postMessage({ type: 'initialize', data: apiKey });
+      worker.postMessage({ 
+        type: 'initialize', 
+        data: {
+          apiKey: apiKey,
+          projectPath: projectPath
+        } 
+      });
     }
   } catch (error: unknown) {
     const errorMessage = error instanceof Error

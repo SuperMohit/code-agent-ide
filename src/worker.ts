@@ -108,18 +108,42 @@ async function processFile(filePath: string, collection: Collection) {
 }
 
 
+const processedFiles = new Set<string>();  // Track the processed files
 
-async function processDirectory(directoryPath: string): Promise<void> {
+async function processDirectory(directoryPath: string, projectPath: string): Promise<void> {
     try {
         const client = new ChromaClient({
             tenant: 'quest',
             database: 'questdb',
         });
 
-        const collectionName = "python_code";
+        let collectionName = projectPath
+            .replace(/[^a-zA-Z0-9._-]/g, '') // Remove invalid characters
+            .replace(/ /g, '_') // Replace spaces with underscores
+            .toLowerCase(); // Convert to lowercase
+
+        // Add prefix if too short
+        if (collectionName.length < 3) {
+            collectionName = `proj_${collectionName}`;
+        }
+
+        // Truncate if too long
+        if (collectionName.length > 63) {
+            collectionName = collectionName.substring(0, 63);
+        }
+
+        // Ensure it starts and ends with a valid character
+        if (!/^[a-zA-Z0-9]/.test(collectionName)) {
+            collectionName = `p_${collectionName}`;
+        }
+        if (!/[a-zA-Z0-9]$/.test(collectionName)) {
+            collectionName = `${collectionName}_p`;
+        }
+
+        console.log(`Using collection name: ${collectionName}`);
+        
         let collection: Collection;
-
-
+        
         // Check if the collection already exists
         try {
             collection = await client.getCollection({ name: collectionName } as any);
@@ -137,11 +161,17 @@ async function processDirectory(directoryPath: string): Promise<void> {
 
         const files = getFiles(directoryPath);
         for (const filePath of files) {
+            if (processedFiles.has(filePath)) {
+                console.log(`Skipping already processed file: ${filePath}`)
+                continue;
+            }
+
             try {
                 console.log(`Processing file: ${filePath}`);
                 await processFile(filePath, collection);
+                processedFiles.add(filePath);    // Mark the file as processed
             } catch (error) {
-                console.error(`Error processing ${filePath}:`, error);
+                console.error(`Error processing ${filePath}:`, error)
             }
         }
 
@@ -153,13 +183,26 @@ async function processDirectory(directoryPath: string): Promise<void> {
 }
 
 
-parentPort?.on('message', async (message: { type: 'initialize' | 'process', data: string }) => {
+parentPort?.on('message', async (message: { 
+    type: 'initialize' | 'process', 
+    data: { 
+        apiKey?: string;
+        projectPath: string;
+        directoryPath?: string;
+    } 
+}) => {
     try {
         if (message.type === 'initialize') {
-            await initializeOpenAI(message.data);
+            if (!message.data.apiKey) {
+                throw new Error('OpenAI API key is required');
+            }
+            await initializeOpenAI(message.data.apiKey);
             parentPort?.postMessage({ success: true });
         } else {
-            await processDirectory(message.data);
+            if (!message.data.directoryPath) {
+                throw new Error('Directory path is required');
+            }
+            await processDirectory(message.data.directoryPath, message.data.projectPath);
             parentPort?.postMessage({ success: true });
         }
     } catch (error: unknown) {
